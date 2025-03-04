@@ -1,5 +1,4 @@
-# MyTestRepo
-This is a test repository to check if everything works as intended.
+# Bitcoin App
 
-# Some math
-Lets check, if LaTeX works in markdown: $$\alpha = \frac{1}{2}$$
+## Links
+libbitcoin: https://libbitcoin.info
