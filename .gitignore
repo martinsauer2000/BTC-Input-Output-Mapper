@@ -1,0 +1,4 @@
+# Ignore files in git
+
+# Ignore .DS macOS files
+*.DS
