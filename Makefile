@@ -14,6 +14,7 @@ endif
 
 # Compiler Flags
 CFLAGS = -Wall -g -c
+LFLAGS = -lcurl
 
 all: compile link
 
@@ -23,4 +24,4 @@ compile: ./src/main.cpp
 
 # Link obj to executable
 link: ./obj/main.o
-	$(CC) -o $(EXEC) ./obj/main.o
+	$(CC) -o $(EXEC) ./obj/main.o $(LFLAGS)
