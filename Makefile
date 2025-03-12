@@ -5,22 +5,26 @@ OS := $(shell uname)
 ifeq ($(OS), Linux)
     CC = g++
     EXEC = ./bin/my_program_linux
+    CFLAGS = -Wall -g -c -I/usr/local/include
+    LFLAGS = -lcurl
+    # TODO: check includes for curl and nlohmann-json
 endif
 
 ifeq ($(OS), Darwin)
+    # brew install gcc
     CC = g++-14
     EXEC = ./bin/my_program_mac
+    CFLAGS = -Wall -g -c -I/opt/homebrew/opt/nlohmann-json/include
+    LFLAGS = -lcurl
 endif
-
-# Compiler Flags
-CFLAGS = -Wall -g -c
-LFLAGS = -lcurl
 
 all: compile link
 
 # Compile source to obj
 compile: ./src/main.cpp
 	$(CC) $(CFLAGS) ./src/main.cpp -o ./obj/main.o
+
+# TODO: use variables for source and object files
 
 # Link obj to executable
 link: ./obj/main.o

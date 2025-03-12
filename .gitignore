@@ -2,3 +2,6 @@
 
 # Ignore .DS macOS files
 *.DS
+
+# Ignore binary builds for now
+bin/
