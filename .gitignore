@@ -1,7 +1,7 @@
 # Ignore files in git
 
 # Ignore .DS macOS files
-*.DS
+.DS*
 
 # Ignore binary builds for now
 bin/
