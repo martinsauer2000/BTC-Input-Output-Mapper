@@ -4,6 +4,8 @@
 #include <nlohmann/json.hpp>
 #include <cstdlib>
 #include "transaction_data.h"
+#include "subset_generator.h"
+#include "bell_number.h"
 
 // Function to handle the response from the RPC call
 size_t WriteCallback(void* contents, size_t size, size_t nmemb, void* userp) {
@@ -158,12 +160,14 @@ TransactionData parse_transaction_data(const nlohmann::json& json_response) {
 }
 
 int main() {
+    /*
+    // Original code (commented out)
     // Create the JSON RPC request payload for getting raw transaction data
     nlohmann::json json_request = {
         {"jsonrpc", "1.0"},
         {"id", "curltest"},
         {"method", "getrawtransaction"},
-        {"params", nlohmann::json::array({"97c587182189bc9a78af79c257e5af7332cd20524f410bff80bd6cfb9c6024f9", true})}
+        {"params", nlohmann::json::array({"XXX", true})}
     };
 
     // Make the RPC request and get the response
@@ -199,7 +203,57 @@ int main() {
     } catch (const nlohmann::json::exception& e) {
         std::cerr << "Error parsing JSON response: " << e.what() << std::endl;
     }
-
+    */
+    
+    std::cout << "===== Testing Subset Generator =====" << std::endl;
+    
+    // Create a sample TransactionData object
+    TransactionData sample_tx;
+    
+    // Add some inputs
+    sample_tx.add_input("input_0", 0.5);
+    sample_tx.add_input("input_1", 0.3);
+    sample_tx.add_input("input_2", 0.2);
+    
+    // Add some outputs
+    sample_tx.add_output("output_0", 0.4);
+    sample_tx.add_output("output_1", 0.35);
+    sample_tx.add_output("output_2", 0.15);
+    
+    // Generate all non-empty subsets of inputs
+    std::cout << "\nInput Subsets:" << std::endl;
+    auto input_subsets = generate_subsets(sample_tx, SubsetType::INPUTS);
+    for (const auto& subset : input_subsets) {
+        print_subset(subset, sample_tx, SubsetType::INPUTS);
+    }
+    
+    // Generate all non-empty subsets of outputs
+    std::cout << "\nOutput Subsets:" << std::endl;
+    auto output_subsets = generate_subsets(sample_tx, SubsetType::OUTPUTS);
+    for (const auto& subset : output_subsets) {
+        print_subset(subset, sample_tx, SubsetType::OUTPUTS);
+    }
+    
+    std::cout << "\n===== Testing Bell Number Function =====" << std::endl;
+    
+    // Test the Bell number function with known values
+    std::cout << "B(0) = " << compute_bell_number(0) << " (Expected: 1)" << std::endl;
+    std::cout << "B(1) = " << compute_bell_number(1) << " (Expected: 1)" << std::endl;
+    std::cout << "B(2) = " << compute_bell_number(2) << " (Expected: 2)" << std::endl;
+    std::cout << "B(3) = " << compute_bell_number(3) << " (Expected: 5)" << std::endl;
+    std::cout << "B(4) = " << compute_bell_number(4) << " (Expected: 15)" << std::endl;
+    std::cout << "B(5) = " << compute_bell_number(5) << " (Expected: 52)" << std::endl;
+    
+    // Test with a larger value
+    std::cout << "B(10) = " << compute_bell_number(10) << " (Expected: 115975)" << std::endl;
+    
+    // Test error handling
+    try {
+        compute_bell_number(-1);
+    } catch (const std::invalid_argument& e) {
+        std::cout << "Error handling test passed: " << e.what() << std::endl;
+    }
+    
     return EXIT_SUCCESS;
 }
 
