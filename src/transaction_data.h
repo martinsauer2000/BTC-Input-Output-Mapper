@@ -102,4 +102,3 @@ public:
 };
 
 #endif // TRANSACTION_DATA_H
-

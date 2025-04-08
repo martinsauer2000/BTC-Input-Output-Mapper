@@ -6,6 +6,7 @@
 #include "transaction_data.h"
 #include "subset_generator.h"
 #include "bell_number.h"
+#include "subset_analyzer.h"
 
 // Function to handle the response from the RPC call
 size_t WriteCallback(void* contents, size_t size, size_t nmemb, void* userp) {
@@ -160,23 +161,35 @@ TransactionData parse_transaction_data(const nlohmann::json& json_response) {
 }
 
 int main() {
-    /*
-    // Original code (commented out)
+    // Prompt the user to enter a transaction ID
+    std::string txid;
+    std::cout << "Enter a Bitcoin transaction ID: ";
+    std::cin >> txid;
+    
+    std::cout << "Fetching transaction data for: " << txid << std::endl;
+    
     // Create the JSON RPC request payload for getting raw transaction data
     nlohmann::json json_request = {
         {"jsonrpc", "1.0"},
         {"id", "curltest"},
         {"method", "getrawtransaction"},
-        {"params", nlohmann::json::array({"XXX", true})}
+        {"params", nlohmann::json::array({txid, true})}
     };
-
+    
     // Make the RPC request and get the response
     std::string response = rpc_request(json_request);
-
+    
     // Parse the JSON response
     try {
         nlohmann::json json_response = nlohmann::json::parse(response);
-        std::cout << "Transaction Data: " << json_response.dump(4) << std::endl;
+        
+        // Check if there's an error in the response
+        if (json_response.contains("error") && !json_response["error"].is_null()) {
+            std::cerr << "Error from Bitcoin RPC: " << json_response["error"].dump(4) << std::endl;
+            return EXIT_FAILURE;
+        }
+        
+        std::cout << "Transaction data retrieved successfully." << std::endl;
         
         // Parse transaction data into our custom class
         TransactionData tx_data = parse_transaction_data(json_response);
@@ -200,60 +213,79 @@ int main() {
             std::cout << id << ": " << tx_data.get_output_value(id) << " BTC" << std::endl;
         }
         
+        // Generate all subsets of inputs
+        std::cout << "\nGenerating input subsets..." << std::endl;
+        auto input_subsets = generate_subsets(tx_data, SubsetType::INPUTS);
+        std::cout << "Generated " << input_subsets.size() << " input subsets." << std::endl;
+        
+        // Generate all subsets of outputs
+        std::cout << "\nGenerating output subsets..." << std::endl;
+        auto output_subsets = generate_subsets(tx_data, SubsetType::OUTPUTS);
+        std::cout << "Generated " << output_subsets.size() << " output subsets." << std::endl;
+        
+        // Display some statistics
+        std::cout << "\nSubset Statistics:" << std::endl;
+        std::cout << "Number of inputs: " << tx_data.get_input_ids().size() << std::endl;
+        std::cout << "Number of outputs: " << tx_data.get_output_ids().size() << std::endl;
+        std::cout << "Number of possible input subsets: " << input_subsets.size() << std::endl;
+        std::cout << "Number of possible output subsets: " << output_subsets.size() << std::endl;
+        
+        // Ask if user wants to see all subsets (could be a lot for large transactions)
+        char show_all;
+        std::cout << "\nDo you want to see all subsets? (y/n): ";
+        std::cin >> show_all;
+        
+        if (show_all == 'y' || show_all == 'Y') {
+            // Display all input subsets
+            std::cout << "\nAll Input Subsets:" << std::endl;
+            for (const auto& subset : input_subsets) {
+                print_subset(subset, tx_data, SubsetType::INPUTS);
+            }
+            
+            // Display all output subsets
+            std::cout << "\nAll Output Subsets:" << std::endl;
+            for (const auto& subset : output_subsets) {
+                print_subset(subset, tx_data, SubsetType::OUTPUTS);
+            }
+        }
+        
+        // Ask if user wants to see all valid input-output combinations
+        char show_combinations;
+        std::cout << "\nDo you want to see all valid input-output combinations? (y/n): ";
+        std::cin >> show_combinations;
+        
+        if (show_combinations == 'y' || show_combinations == 'Y') {
+            // Find and display all valid combinations
+            std::cout << "\n===== Valid Input-Output Combinations =====" << std::endl;
+            
+            // Calculate the maximum possible combinations
+            size_t max_combinations = input_subsets.size() * output_subsets.size();
+            std::cout << "Maximum possible combinations: " << max_combinations << std::endl;
+            
+            // Check if there are too many combinations
+            if (max_combinations > 1000) {
+                char confirm;
+                std::cout << "Warning: This will generate a large number of combinations." << std::endl;
+                std::cout << "Are you sure you want to continue? (y/n): ";
+                std::cin >> confirm;
+                
+                if (confirm != 'y' && confirm != 'Y') {
+                    std::cout << "Operation cancelled by user." << std::endl;
+                    return EXIT_SUCCESS;
+                }
+            }
+            
+            // Find and display valid combinations
+            size_t valid_count = find_valid_combinations(tx_data, input_subsets, output_subsets);
+        }
+        
     } catch (const nlohmann::json::exception& e) {
         std::cerr << "Error parsing JSON response: " << e.what() << std::endl;
-    }
-    */
-    
-    std::cout << "===== Testing Subset Generator =====" << std::endl;
-    
-    // Create a sample TransactionData object
-    TransactionData sample_tx;
-    
-    // Add some inputs
-    sample_tx.add_input("input_0", 0.5);
-    sample_tx.add_input("input_1", 0.3);
-    sample_tx.add_input("input_2", 0.2);
-    
-    // Add some outputs
-    sample_tx.add_output("output_0", 0.4);
-    sample_tx.add_output("output_1", 0.35);
-    sample_tx.add_output("output_2", 0.15);
-    
-    // Generate all non-empty subsets of inputs
-    std::cout << "\nInput Subsets:" << std::endl;
-    auto input_subsets = generate_subsets(sample_tx, SubsetType::INPUTS);
-    for (const auto& subset : input_subsets) {
-        print_subset(subset, sample_tx, SubsetType::INPUTS);
-    }
-    
-    // Generate all non-empty subsets of outputs
-    std::cout << "\nOutput Subsets:" << std::endl;
-    auto output_subsets = generate_subsets(sample_tx, SubsetType::OUTPUTS);
-    for (const auto& subset : output_subsets) {
-        print_subset(subset, sample_tx, SubsetType::OUTPUTS);
-    }
-    
-    std::cout << "\n===== Testing Bell Number Function =====" << std::endl;
-    
-    // Test the Bell number function with known values
-    std::cout << "B(0) = " << compute_bell_number(0) << " (Expected: 1)" << std::endl;
-    std::cout << "B(1) = " << compute_bell_number(1) << " (Expected: 1)" << std::endl;
-    std::cout << "B(2) = " << compute_bell_number(2) << " (Expected: 2)" << std::endl;
-    std::cout << "B(3) = " << compute_bell_number(3) << " (Expected: 5)" << std::endl;
-    std::cout << "B(4) = " << compute_bell_number(4) << " (Expected: 15)" << std::endl;
-    std::cout << "B(5) = " << compute_bell_number(5) << " (Expected: 52)" << std::endl;
-    
-    // Test with a larger value
-    std::cout << "B(10) = " << compute_bell_number(10) << " (Expected: 115975)" << std::endl;
-    
-    // Test error handling
-    try {
-        compute_bell_number(-1);
-    } catch (const std::invalid_argument& e) {
-        std::cout << "Error handling test passed: " << e.what() << std::endl;
+        return EXIT_FAILURE;
+    } catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << std::endl;
+        return EXIT_FAILURE;
     }
     
     return EXIT_SUCCESS;
 }
-

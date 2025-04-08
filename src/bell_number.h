@@ -52,4 +52,3 @@ unsigned long long compute_bell_number(int n) {
 }
 
 #endif // BELL_NUMBER_H
-

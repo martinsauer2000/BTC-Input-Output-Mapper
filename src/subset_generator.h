@@ -100,4 +100,3 @@ void print_subset(const std::vector<std::string>& subset,
 }
 
 #endif // SUBSET_GENERATOR_H
-
