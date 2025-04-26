@@ -161,7 +161,7 @@ TransactionData parse_transaction_data(const nlohmann::json& json_response) {
 }
 
 int main() {
-    // Prompt the user to enter a transaction ID
+   /* // Prompt the user to enter a transaction ID
     std::string txid;
     std::cout << "Enter a Bitcoin transaction ID: ";
     std::cin >> txid;
@@ -192,7 +192,13 @@ int main() {
         std::cout << "Transaction data retrieved successfully." << std::endl;
         
         // Parse transaction data into our custom class
-        TransactionData tx_data = parse_transaction_data(json_response);
+        TransactionData tx_data = parse_transaction_data(json_response);*/
+        
+        TransactionData tx_data;
+        tx_data.add_input("input0", 1);
+        tx_data.add_input("input1", 1);
+        tx_data.add_output("output0", 0.5);
+        tx_data.add_output("output1", 0.5);
         
         // Display transaction summary
         std::cout << "\nTransaction Summary:" << std::endl;
@@ -279,13 +285,13 @@ int main() {
             size_t valid_count = find_valid_combinations(tx_data, input_subsets, output_subsets);
         }
         
-    } catch (const nlohmann::json::exception& e) {
+    /*} catch (const nlohmann::json::exception& e) {
         std::cerr << "Error parsing JSON response: " << e.what() << std::endl;
         return EXIT_FAILURE;
     } catch (const std::exception& e) {
         std::cerr << "Error: " << e.what() << std::endl;
         return EXIT_FAILURE;
-    }
+    }*/
     
     return EXIT_SUCCESS;
 }
