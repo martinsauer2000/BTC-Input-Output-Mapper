@@ -77,53 +77,32 @@ std::vector<Partition> generate_partitions(const StringSet& elements) {
 }
 
 /**
- * Checks if a valid matching exists between input and output partitions.
- * A valid matching means each input subset can be paired with an output subset
- * where output_value <= input_value for EACH pair.
+ * Checks if a specific mapping between input and output partition groups is valid.
+ * A valid mapping means each input group has sufficient value to cover its corresponding output group.
  * 
  * @param tx_data The transaction data
  * @param input_partition A partition of input IDs
- * @param output_partition A partition of output IDs
- * @return true if a valid matching exists, false otherwise
+ * @param output_partition A partition of output IDs with groups in a specific order
+ * @return true if the mapping is valid, false otherwise
  */
-bool is_valid_matching(
+bool is_valid_mapping(
     const TransactionData& tx_data,
     const Partition& input_partition,
     const Partition& output_partition
 ) {
-    // If the number of subsets doesn't match, no valid matching is possible
+    // If the number of groups doesn't match, no valid mapping is possible
     if (input_partition.size() != output_partition.size()) {
         return false;
     }
     
-    // Calculate values for each input subset
-    std::vector<double> input_values;
-    for (const auto& subset : input_partition) {
-        input_values.push_back(calculate_subset_value(tx_data, subset, SubsetType::INPUTS));
-    }
-    
-    // Calculate values for each output subset
-    std::vector<double> output_values;
-    for (const auto& subset : output_partition) {
-        output_values.push_back(calculate_subset_value(tx_data, subset, SubsetType::OUTPUTS));
-    }
-    
-    // Create pairs of (input_value, output_value) and sort by the difference (input - output) in descending order
-    std::vector<std::pair<double, double>> value_pairs;
-    for (size_t i = 0; i < input_values.size(); ++i) {
-        value_pairs.push_back({input_values[i], output_values[i]});
-    }
-    
-    // Sort by the difference (input - output) in descending order
-    std::sort(value_pairs.begin(), value_pairs.end(), 
-        [](const auto& a, const auto& b) {
-            return (a.first - a.second) > (b.first - b.second);
-        });
-    
-    // Check if each output can be matched with an input and ensure no negative differences
-    for (const auto& [input_value, output_value] : value_pairs) {
+    // Check each group pair
+    for (size_t i = 0; i < input_partition.size(); ++i) {
+        double input_value = calculate_subset_value(tx_data, input_partition[i], SubsetType::INPUTS);
+        double output_value = calculate_subset_value(tx_data, output_partition[i], SubsetType::OUTPUTS);
+        
+        // If any output group exceeds its input group, the mapping is invalid
         if (output_value > input_value) {
-            return false;  // This output cannot be covered by its input
+            return false;
         }
     }
     
@@ -131,12 +110,124 @@ bool is_valid_matching(
 }
 
 /**
- * Finds all valid partitions of inputs and outputs in a transaction.
- * A valid partition means the inputs and outputs can be grouped in a way
+ * Generates all permutations of a partition and checks each one for validity.
+ * 
+ * @param tx_data The transaction data
+ * @param input_partition A partition of input IDs
+ * @param output_partition A partition of output IDs
+ * @param valid_count Reference to the counter for valid mappings
+ */
+void check_all_permutations(
+    const TransactionData& tx_data,
+    const Partition& input_partition,
+    Partition output_partition,
+    size_t& valid_count
+) {
+    // Create indices for permutation
+    std::vector<size_t> indices(output_partition.size());
+    for (size_t i = 0; i < indices.size(); ++i) {
+        indices[i] = i;
+    }
+    
+    // Generate all permutations of indices
+    do {
+        // Create permuted output partition
+        Partition permuted_output;
+        permuted_output.resize(output_partition.size());
+        
+        for (size_t i = 0; i < indices.size(); ++i) {
+            permuted_output[i] = output_partition[indices[i]];
+        }
+        
+        // Check if this mapping is valid
+        if (is_valid_mapping(tx_data, input_partition, permuted_output)) {
+            valid_count++;
+            
+            // Print the valid partition and mapping
+            std::cout << "\nValid Partition and Mapping #" << valid_count << ":" << std::endl;
+            
+            // Print input partition
+            std::cout << "  Input Partition:" << std::endl;
+            for (size_t i = 0; i < input_partition.size(); ++i) {
+                const auto& subset = input_partition[i];
+                double value = calculate_subset_value(tx_data, subset, SubsetType::INPUTS);
+                
+                std::cout << "    Group " << (i + 1) << ": { ";
+                for (size_t j = 0; j < subset.size(); ++j) {
+                    std::cout << subset[j];
+                    if (j < subset.size() - 1) {
+                        std::cout << ", ";
+                    }
+                }
+                std::cout << " } = " << value << " BTC" << std::endl;
+            }
+            
+            // Print output partition
+            std::cout << "  Output Partition:" << std::endl;
+            for (size_t i = 0; i < permuted_output.size(); ++i) {
+                const auto& subset = permuted_output[i];
+                double value = calculate_subset_value(tx_data, subset, SubsetType::OUTPUTS);
+                
+                std::cout << "    Group " << (i + 1) << ": { ";
+                for (size_t j = 0; j < subset.size(); ++j) {
+                    std::cout << subset[j];
+                    if (j < subset.size() - 1) {
+                        std::cout << ", ";
+                    }
+                }
+                std::cout << " } = " << value << " BTC" << std::endl;
+            }
+            
+            // Print the mapping
+            std::cout << "  Mapping:" << std::endl;
+            for (size_t i = 0; i < input_partition.size(); ++i) {
+                double input_value = calculate_subset_value(tx_data, input_partition[i], SubsetType::INPUTS);
+                double output_value = calculate_subset_value(tx_data, permuted_output[i], SubsetType::OUTPUTS);
+                double difference = input_value - output_value;
+                
+                std::cout << "    Input Group " << (i + 1) << " -> Output Group " << (i + 1) << std::endl;
+                std::cout << "      Input: { ";
+                for (size_t j = 0; j < input_partition[i].size(); ++j) {
+                    std::cout << input_partition[i][j];
+                    if (j < input_partition[i].size() - 1) {
+                        std::cout << ", ";
+                    }
+                }
+                std::cout << " } = " << input_value << " BTC" << std::endl;
+                
+                std::cout << "      Output: { ";
+                for (size_t j = 0; j < permuted_output[i].size(); ++j) {
+                    std::cout << permuted_output[i][j];
+                    if (j < permuted_output[i].size() - 1) {
+                        std::cout << ", ";
+                    }
+                }
+                std::cout << " } = " << output_value << " BTC" << std::endl;
+                
+                std::cout << "      Difference: " << difference << " BTC" << std::endl;
+            }
+            
+            // Print the total difference
+            double total_input = 0.0;
+            double total_output = 0.0;
+            
+            for (size_t i = 0; i < input_partition.size(); ++i) {
+                total_input += calculate_subset_value(tx_data, input_partition[i], SubsetType::INPUTS);
+                total_output += calculate_subset_value(tx_data, permuted_output[i], SubsetType::OUTPUTS);
+            }
+            
+            std::cout << "  Total Difference: " << (total_input - total_output) << " BTC" << std::endl;
+        }
+    } while (std::next_permutation(indices.begin(), indices.end()));
+}
+
+/**
+ * Finds all valid partitions and mappings of inputs and outputs in a transaction.
+ * A valid partition and mapping means the inputs and outputs can be grouped in a way
  * where each input group covers the value of a corresponding output group.
  * 
  * @param tx_data The transaction data
- * @return The number of valid partitions found
+ * @return The number of valid partitions and mappings found
  */
 size_t find_valid_partitions(const TransactionData& tx_data) {
     // Get input and output IDs
@@ -152,87 +243,28 @@ size_t find_valid_partitions(const TransactionData& tx_data) {
     auto output_partitions = generate_partitions(output_ids);
     std::cout << "Generated " << output_partitions.size() << " output partitions." << std::endl;
     
-    // Calculate total combinations
+    // Calculate total partition combinations
     size_t total_combinations = input_partitions.size() * output_partitions.size();
-    std::cout << "Total possible combinations: " << total_combinations << std::endl;
+    std::cout << "Total possible partition combinations: " << total_combinations << std::endl;
     
-    // Find valid partitions
-    std::cout << "Finding valid partitions..." << std::endl;
+    // Find valid partitions and mappings
+    std::cout << "Finding valid partitions and mappings..." << std::endl;
     size_t valid_count = 0;
     
     // Check each combination of input and output partitions
     for (const auto& input_partition : input_partitions) {
         for (const auto& output_partition : output_partitions) {
-            if (is_valid_matching(tx_data, input_partition, output_partition)) {
-                valid_count++;
-                
-                // Print the valid partition
-                std::cout << "\nValid Partition #" << valid_count << ":" << std::endl;
-                
-                // Print input partition
-                std::cout << "  Input Partition:" << std::endl;
-                for (size_t i = 0; i < input_partition.size(); ++i) {
-                    const auto& subset = input_partition[i];
-                    double value = calculate_subset_value(tx_data, subset, SubsetType::INPUTS);
-                    
-                    std::cout << "    Group " << (i + 1) << ": { ";
-                    for (size_t j = 0; j < subset.size(); ++j) {
-                        std::cout << subset[j];
-                        if (j < subset.size() - 1) {
-                            std::cout << ", ";
-                        }
-                    }
-                    std::cout << " } = " << value << " BTC" << std::endl;
-                }
-                
-                // Print output partition
-                std::cout << "  Output Partition:" << std::endl;
-                for (size_t i = 0; i < output_partition.size(); ++i) {
-                    const auto& subset = output_partition[i];
-                    double value = calculate_subset_value(tx_data, subset, SubsetType::OUTPUTS);
-                    
-                    std::cout << "    Group " << (i + 1) << ": { ";
-                    for (size_t j = 0; j < subset.size(); ++j) {
-                        std::cout << subset[j];
-                        if (j < subset.size() - 1) {
-                            std::cout << ", ";
-                        }
-                    }
-                    std::cout << " } = " << value << " BTC" << std::endl;
-                }
-                
-                // Print the differences
-                std::cout << "  Differences:" << std::endl;
-                double total_input = 0.0;
-                double total_output = 0.0;
-                bool has_negative_difference = false;
-                
-                for (size_t i = 0; i < input_partition.size(); ++i) {
-                    double input_value = calculate_subset_value(tx_data, input_partition[i], SubsetType::INPUTS);
-                    double output_value = calculate_subset_value(tx_data, output_partition[i], SubsetType::OUTPUTS);
-                    double difference = input_value - output_value;
-                    
-                    if (difference < 0) {
-                        has_negative_difference = true;
-                    }
-                    
-                    std::cout << "    Group " << (i + 1) << ": " << difference << " BTC" << std::endl;
-                    
-                    total_input += input_value;
-                    total_output += output_value;
-                }
-                
-                std::cout << "  Total Difference: " << (total_input - total_output) << " BTC" << std::endl;
-                
-                // Double-check for negative differences (this should never happen with the corrected is_valid_matching)
-                if (has_negative_difference) {
-                    std::cout << "  WARNING: This partition has negative differences and should not be considered valid!" << std::endl;
-                }
+            // Skip if the number of groups doesn't match
+            if (input_partition.size() != output_partition.size()) {
+                continue;
             }
+            
+            // Check all permutations of this output partition
+            check_all_permutations(tx_data, input_partition, output_partition, valid_count);
         }
     }
     
-    std::cout << "\nTotal valid partitions found: " << valid_count << std::endl;
+    std::cout << "\nTotal valid partitions and mappings found: " << valid_count << std::endl;
     return valid_count;
 }
 
