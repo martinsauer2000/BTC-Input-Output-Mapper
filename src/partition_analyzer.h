@@ -12,6 +12,7 @@
 #include <mutex>
 #include <atomic>
 #include <iomanip>  // For std::setprecision
+#include <cmath>    // For std::min
 #include "transaction_data.h"
 #include "subset_generator.h"
 
@@ -362,7 +363,7 @@ void check_all_permutations(
        // Check if this mapping is valid
        if (is_valid_mapping(tx_data, input_partition, permuted_output, input_mapper, output_mapper)) {
            // Increment the atomic counter
-           size_t current_count = valid_count.fetch_add(1) + 1;
+           valid_count.fetch_add(1);
            
            // Store the valid mapping
            {
@@ -385,6 +386,7 @@ void check_all_permutations(
 * @param results_mutex Mutex for thread-safe access to shared data
 * @param valid_mappings Vector to store valid mappings
 * @param pruned_count Reference to counter for pruned partition pairs
+* @param checked_count Reference to counter for checked partition pairs
 */
 void process_partition_batch(
    const TransactionData& tx_data,
@@ -394,7 +396,8 @@ void process_partition_batch(
    std::atomic<size_t>& valid_count,
    std::mutex& results_mutex,
    std::vector<std::tuple<IndexPartition, IndexPartition, std::vector<size_t>>>& valid_mappings,
-   std::atomic<size_t>& pruned_count
+   std::atomic<size_t>& pruned_count,
+   std::atomic<size_t>& checked_count
 ) {
    for (const auto& [input_partition, output_partition] : partition_pairs) {
        // Skip if the number of groups doesn't match
@@ -419,6 +422,9 @@ void process_partition_batch(
            results_mutex, 
            valid_mappings
        );
+       
+       // Increment the counter for checked partition pairs
+       checked_count.fetch_add(1);
    }
 }
 
@@ -521,6 +527,68 @@ void display_valid_mappings(
 }
 
 /**
+* Calculates Stirling numbers of the second kind.
+* S(n,k) = number of ways to partition a set of n objects into k non-empty subsets.
+* 
+* @param n Number of objects
+* @param k Number of non-empty subsets
+* @return The Stirling number S(n,k)
+*/
+size_t stirling_second_kind(size_t n, size_t k) {
+    if (k == 0) return (n == 0) ? 1 : 0;
+    if (k > n) return 0;
+    if (k == 1 || k == n) return 1;
+    
+    // Use recurrence relation: S(n,k) = k*S(n-1,k) + S(n-1,k-1)
+    return k * stirling_second_kind(n-1, k) + stirling_second_kind(n-1, k-1);
+}
+
+/**
+* Calculates the factorial of a number.
+* 
+* @param n The number
+* @return n!
+*/
+size_t factorial(size_t n) {
+    if (n <= 1) return 1;
+    size_t result = 1;
+    for (size_t i = 2; i <= n; ++i) {
+        result *= i;
+    }
+    return result;
+}
+
+/**
+* Draws a simple ASCII progress bar.
+* 
+* @param progress Percentage of progress (0-100)
+* @param width Width of the progress bar in characters
+* @return String containing the ASCII progress bar
+*/
+std::string draw_progress_bar(double progress, int width = 20) {
+    // Ensure progress is between 0 and 100
+    progress = std::max(0.0, std::min(100.0, progress));
+    
+    // Calculate the number of filled positions
+    int filled = static_cast<int>(progress * width / 100.0);
+    
+    // Create the progress bar
+    std::string bar = "[";
+    for (int i = 0; i < width; ++i) {
+        if (i < filled) {
+            bar += "=";
+        } else if (i == filled) {
+            bar += ">";
+        } else {
+            bar += " ";
+        }
+    }
+    bar += "]";
+    
+    return bar;
+}
+
+/**
 * Processes chunks of partitions to reduce memory usage.
 * 
 * @param tx_data The transaction data
@@ -539,6 +607,9 @@ size_t process_partition_chunks(
    std::vector<ElementIndex> input_indices(input_mapper.elements.size());
    std::vector<ElementIndex> output_indices(output_mapper.elements.size());
    
+   const auto& input_ids = input_mapper.elements;
+   const auto& output_ids = output_mapper.elements;
+
    for (ElementIndex i = 0; i < input_indices.size(); ++i) {
        input_indices[i] = i;
    }
@@ -558,13 +629,33 @@ size_t process_partition_chunks(
    std::cout << "Total possible input partitions: " << total_input_partitions << std::endl;
    std::cout << "Total possible output partitions: " << total_output_partitions << std::endl;
    
-   // Estimate total compatible combinations (this is an upper bound)
-   size_t estimated_total_combinations = total_input_partitions * total_output_partitions;
-   std::cout << "Estimated maximum combinations to check: " << estimated_total_combinations << std::endl;
+   // Calculate distribution of partitions by group size
+   std::vector<size_t> input_partitions_by_size(input_ids.size() + 1, 0);
+   std::vector<size_t> output_partitions_by_size(output_ids.size() + 1, 0);
    
-   // Storage for valid mappings and pruning statistics
+   // Calculate using Stirling numbers of the second kind
+   for (size_t k = 1; k <= input_ids.size(); ++k) {
+       input_partitions_by_size[k] = stirling_second_kind(input_ids.size(), k);
+   }
+   
+   for (size_t k = 1; k <= output_ids.size(); ++k) {
+       output_partitions_by_size[k] = stirling_second_kind(output_ids.size(), k);
+   }
+   
+   // Calculate total compatible pairs (only those with matching group counts)
+   size_t total_compatible_pairs = 0;
+   for (size_t k = 1; k <= std::min(input_ids.size(), output_ids.size()); ++k) {
+       // For each group size k, we need to consider all pairs of input and output partitions
+       // with exactly k groups
+       total_compatible_pairs += input_partitions_by_size[k] * output_partitions_by_size[k];
+   }
+   
+   std::cout << "Estimated compatible pairs to check: " << total_compatible_pairs << std::endl;
+   
+   // Storage for valid mappings and statistics
    std::atomic<size_t> valid_count(0);
    std::atomic<size_t> pruned_count(0);
+   std::atomic<size_t> checked_count(0);
    std::mutex results_mutex;
    std::vector<std::tuple<IndexPartition, IndexPartition, std::vector<size_t>>> valid_mappings;
    
@@ -577,28 +668,28 @@ size_t process_partition_chunks(
    std::cout << "Processing partitions in chunks of size " << chunk_size << "..." << std::endl;
    
    // Process input partitions in chunks
-   size_t input_chunks_processed = 0;
    size_t pairs_processed = 0;
-   size_t compatible_pairs = 0;
    
    // For progress tracking
    auto start_time = std::chrono::high_resolution_clock::now();
    auto last_update_time = start_time;
    
+   // Track partitions by group size for more accurate progress tracking
+   std::vector<size_t> input_partitions_processed(input_ids.size() + 1, 0);
+   std::vector<size_t> output_partitions_processed(output_ids.size() + 1, 0);
+   
+   // Main processing loop
    while (input_generator.has_more()) {
        // Get chunk of input partitions
        auto input_chunk = input_generator.next_chunk(chunk_size);
-       input_chunks_processed++;
        
        // Reset output generator for each input chunk
        PartitionGenerator output_generator(output_indices);
-       size_t output_chunks_processed = 0;
        
        // Process all output partitions for this input chunk
        while (output_generator.has_more()) {
            // Get chunk of output partitions
            auto output_chunk = output_generator.next_chunk(chunk_size);
-           output_chunks_processed++;
            
            // Create partition pairs for this chunk combination
            std::vector<std::pair<IndexPartition, IndexPartition>> partition_pairs;
@@ -607,17 +698,16 @@ size_t process_partition_chunks(
                    // Only add pairs with matching group counts
                    if (input_partition.size() == output_partition.size()) {
                        partition_pairs.emplace_back(input_partition, output_partition);
-                       compatible_pairs++;
                    }
                }
            }
-           
-           pairs_processed += partition_pairs.size();
            
            // If no compatible pairs in this chunk, continue
            if (partition_pairs.empty()) {
                continue;
            }
+           
+           pairs_processed += partition_pairs.size();
            
            // Process partition pairs in parallel
            if (num_threads <= 1 || partition_pairs.size() <= 1) {
@@ -630,7 +720,8 @@ size_t process_partition_chunks(
                    valid_count,
                    results_mutex,
                    valid_mappings,
-                   pruned_count
+                   pruned_count,
+                   checked_count
                );
            } else {
                // Divide the work among threads
@@ -660,7 +751,8 @@ size_t process_partition_chunks(
                        std::ref(valid_count), 
                        std::ref(results_mutex), 
                        std::ref(valid_mappings),
-                       std::ref(pruned_count)
+                       std::ref(pruned_count),
+                       std::ref(checked_count)
                    ));
                }
                
@@ -674,18 +766,20 @@ size_t process_partition_chunks(
            auto current_time = std::chrono::high_resolution_clock::now();
            auto time_elapsed = std::chrono::duration_cast<std::chrono::seconds>(current_time - last_update_time).count();
            
-           // Update progress every second or after processing a significant number of pairs
-           if (time_elapsed >= 1 || (input_chunks_processed * output_chunks_processed) % 5 == 0) {
+           // Update progress once per second
+           if (time_elapsed >= 1) {
                last_update_time = current_time;
                
-               // Calculate progress percentage based on input partitions processed
-               double input_progress = static_cast<double>(input_generator.current_progress()) / total_input_partitions * 100.0;
+               // Calculate progress based on input partitions processed
+               double input_progress = static_cast<double>(input_generator.current_progress()) / total_input_partitions;
+               
+               // Ensure progress doesn't exceed 100%
+               double progress_percentage = std::min(input_progress * 100.0, 99.9);
                
                // Calculate estimated time remaining
                auto total_elapsed = std::chrono::duration_cast<std::chrono::seconds>(current_time - start_time).count();
-               double pairs_per_second = pairs_processed / (total_elapsed > 0 ? total_elapsed : 1);
-               size_t estimated_remaining_pairs = estimated_total_combinations - pairs_processed;
-               double estimated_seconds_remaining = estimated_remaining_pairs / (pairs_per_second > 0 ? pairs_per_second : 1);
+               double seconds_per_percent = total_elapsed / progress_percentage;
+               double estimated_seconds_remaining = seconds_per_percent * (100.0 - progress_percentage);
                
                // Format time remaining
                std::string time_remaining;
@@ -699,20 +793,24 @@ size_t process_partition_chunks(
                    time_remaining = std::to_string(static_cast<int>(estimated_seconds_remaining)) + "s";
                }
                
+               // Draw progress bar
+               std::string progress_bar = draw_progress_bar(progress_percentage);
+               
                // Clear the current line and print progress
                std::cout << "\r" << std::string(80, ' ') << "\r"; // Clear line
-               std::cout << "Progress: " << std::fixed << std::setprecision(1) << input_progress << "% | "
-                         << "Processed: " << pairs_processed << " pairs | "
-                         << "Pruned: " << pruned_count << " pairs | "
-                         << "Found: " << valid_count << " valid mappings | "
-                         << "Est. remaining: " << time_remaining << std::flush;
+               std::cout << progress_bar << " " << std::fixed << std::setprecision(1) << progress_percentage << "% | "
+                         << "Pairs: " << pairs_processed << " | "
+                         << "Valid: " << valid_count << " | "
+                         << "Pruned: " << pruned_count << " | "
+                         << "ETA: " << time_remaining << std::flush;
            }
        }
    }
    
    // Print final progress and newline
    std::cout << "\r" << std::string(80, ' ') << "\r"; // Clear line
-   std::cout << "Completed! Processed " << pairs_processed << " partition pairs. "
+   std::cout << draw_progress_bar(100.0) << " 100.0% | "
+             << "Completed! Processed " << pairs_processed << " partition pairs. "
              << "Pruned " << pruned_count << " pairs. Found " 
              << valid_count << " valid mappings." << std::endl;
    
