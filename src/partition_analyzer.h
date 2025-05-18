@@ -13,6 +13,8 @@
 #include <atomic>
 #include <iomanip>  // For std::setprecision
 #include <cmath>    // For std::min
+#include <fstream>  // For file output
+#include <sstream>  // For string stream
 #include "transaction_data.h"
 #include "subset_generator.h"
 
@@ -322,8 +324,90 @@ bool is_valid_mapping(
 }
 
 /**
+* Formats a mapping for CSV output
+* 
+* @param tx_data The transaction data
+* @param input_partition A partition of input indices
+* @param output_partition A partition of output indices
+* @param indices Permutation indices
+* @param input_mapper Mapper for input elements
+* @param output_mapper Mapper for output elements
+* @param mapping_idx The index of this mapping
+* @return A string containing the CSV-formatted mapping
+*/
+std::string format_mapping_for_csv(
+   const TransactionData& tx_data,
+   const IndexPartition& input_partition,
+   const IndexPartition& output_partition,
+   const std::vector<size_t>& indices,
+   const ElementMapper& input_mapper,
+   const ElementMapper& output_mapper,
+   size_t mapping_idx
+) {
+   std::stringstream ss;
+   
+   // Convert index partitions back to string partitions for output
+   auto input_string_partition = input_mapper.to_string_partition(input_partition);
+   auto output_string_partition = output_mapper.to_string_partition(output_partition);
+   
+   // Calculate total values
+   double total_input = 0.0;
+   double total_output = 0.0;
+   
+   for (size_t i = 0; i < input_string_partition.size(); ++i) {
+       total_input += calculate_subset_value(tx_data, input_string_partition[i], SubsetType::INPUTS);
+       total_output += calculate_subset_value(tx_data, output_string_partition[i], SubsetType::OUTPUTS);
+   }
+   
+   // Write mapping header
+   ss << mapping_idx << ",";
+   ss << input_partition.size() << ","; // Number of groups
+   ss << total_input << ",";
+   ss << total_output << ",";
+   ss << (total_input - total_output) << "\n";
+   
+   // Write each group mapping
+   for (size_t i = 0; i < input_string_partition.size(); ++i) {
+       double input_value = calculate_subset_value(tx_data, input_string_partition[i], SubsetType::INPUTS);
+       double output_value = calculate_subset_value(tx_data, output_string_partition[i], SubsetType::OUTPUTS);
+       double difference = input_value - output_value;
+       
+       // Group number
+       ss << mapping_idx << "," << i << ",";
+       
+       // Input group
+       ss << "\"";
+       for (size_t j = 0; j < input_string_partition[i].size(); ++j) {
+           ss << input_string_partition[i][j];
+           if (j < input_string_partition[i].size() - 1) {
+               ss << ",";
+           }
+       }
+       ss << "\",";
+       
+       // Input value
+       ss << input_value << ",";
+       
+       // Output group
+       ss << "\"";
+       for (size_t j = 0; j < output_string_partition[i].size(); ++j) {
+           ss << output_string_partition[i][j];
+           if (j < output_string_partition[i].size() - 1) {
+               ss << ",";
+           }
+       }
+       ss << "\",";
+       
+       // Output value and difference
+       ss << output_value << "," << difference << "\n";
+   }
+   
+   return ss.str();
+}
+
+/**
 * Generates all permutations of a partition and checks each one for validity.
-* Uses indices for memory efficiency.
+* Writes valid mappings directly to file.
 * 
 * @param tx_data The transaction data
 * @param input_partition A partition of input indices
@@ -331,8 +415,8 @@ bool is_valid_mapping(
 * @param input_mapper Mapper for input elements
 * @param output_mapper Mapper for output elements
 * @param valid_count Reference to the counter for valid mappings
-* @param results_mutex Mutex for thread-safe access to shared data
-* @param valid_mappings Vector to store valid mappings
+* @param file_mutex Mutex for thread-safe file access
+* @param output_file Reference to the output file stream
 */
 void check_all_permutations(
    const TransactionData& tx_data,
@@ -341,8 +425,8 @@ void check_all_permutations(
    const ElementMapper& input_mapper,
    const ElementMapper& output_mapper,
    std::atomic<size_t>& valid_count,
-   std::mutex& results_mutex,
-   std::vector<std::tuple<IndexPartition, IndexPartition, std::vector<size_t>>>& valid_mappings
+   std::mutex& file_mutex,
+   std::ofstream& output_file
 ) {
    // Create indices for permutation
    std::vector<size_t> indices(output_partition.size());
@@ -363,12 +447,24 @@ void check_all_permutations(
        // Check if this mapping is valid
        if (is_valid_mapping(tx_data, input_partition, permuted_output, input_mapper, output_mapper)) {
            // Increment the atomic counter
-           valid_count.fetch_add(1);
+           size_t current_count = valid_count.fetch_add(1) + 1;
            
-           // Store the valid mapping
+           // Format the mapping for CSV output
+           std::string csv_data = format_mapping_for_csv(
+               tx_data, 
+               input_partition, 
+               permuted_output, 
+               indices, 
+               input_mapper, 
+               output_mapper,
+               current_count
+           );
+           
+           // Write to file with mutex protection
            {
-               std::lock_guard<std::mutex> lock(results_mutex);
-               valid_mappings.push_back(std::make_tuple(input_partition, permuted_output, indices));
+               std::lock_guard<std::mutex> lock(file_mutex);
+               output_file << csv_data;
+               output_file.flush(); // Ensure data is written immediately
            }
        }
    } while (std::next_permutation(indices.begin(), indices.end()));
@@ -383,8 +479,8 @@ void check_all_permutations(
 * @param input_mapper Mapper for input elements
 * @param output_mapper Mapper for output elements
 * @param valid_count Reference to the counter for valid mappings
-* @param results_mutex Mutex for thread-safe access to shared data
-* @param valid_mappings Vector to store valid mappings
+* @param file_mutex Mutex for thread-safe file access
+* @param output_file Reference to the output file stream
 * @param pruned_count Reference to counter for pruned partition pairs
 * @param checked_count Reference to counter for checked partition pairs
 */
@@ -394,8 +490,8 @@ void process_partition_batch(
    const ElementMapper& input_mapper,
    const ElementMapper& output_mapper,
    std::atomic<size_t>& valid_count,
-   std::mutex& results_mutex,
-   std::vector<std::tuple<IndexPartition, IndexPartition, std::vector<size_t>>>& valid_mappings,
+   std::mutex& file_mutex,
+   std::ofstream& output_file,
    std::atomic<size_t>& pruned_count,
    std::atomic<size_t>& checked_count
 ) {
@@ -419,8 +515,8 @@ void process_partition_batch(
            input_mapper, 
            output_mapper, 
            valid_count, 
-           results_mutex, 
-           valid_mappings
+           file_mutex, 
+           output_file
        );
        
        // Increment the counter for checked partition pairs
@@ -429,101 +525,33 @@ void process_partition_batch(
 }
 
 /**
-* Displays the valid mappings found during analysis.
+* Draws a simple ASCII progress bar.
 * 
-* @param tx_data The transaction data
-* @param valid_mappings Vector of valid mappings
-* @param input_mapper Mapper for input elements
-* @param output_mapper Mapper for output elements
+* @param progress Percentage of progress (0-100)
+* @param width Width of the progress bar in characters
+* @return String containing the ASCII progress bar
 */
-void display_valid_mappings(
-   const TransactionData& tx_data,
-   const std::vector<std::tuple<IndexPartition, IndexPartition, std::vector<size_t>>>& valid_mappings,
-   const ElementMapper& input_mapper,
-   const ElementMapper& output_mapper
-) {
-   // Display valid mappings
-   for (size_t mapping_idx = 0; mapping_idx < valid_mappings.size(); ++mapping_idx) {
-       const auto& [input_partition, output_partition, indices] = valid_mappings[mapping_idx];
-       
-       // Convert index partitions back to string partitions for display
-       auto input_string_partition = input_mapper.to_string_partition(input_partition);
-       auto output_string_partition = output_mapper.to_string_partition(output_partition);
-       
-       std::cout << "\nValid Partition and Mapping #" << (mapping_idx + 1) << ":" << std::endl;
-       
-       // Print input partition
-       std::cout << "  Input Partition:" << std::endl;
-       for (size_t i = 0; i < input_string_partition.size(); ++i) {
-           const auto& subset = input_string_partition[i];
-           double value = calculate_subset_value(tx_data, subset, SubsetType::INPUTS);
-           
-           std::cout << "    Group " << (i + 1) << ": { ";
-           for (size_t j = 0; j < subset.size(); ++j) {
-               std::cout << subset[j];
-               if (j < subset.size() - 1) {
-                   std::cout << ", ";
-               }
-           }
-           std::cout << " } = " << value << " BTC" << std::endl;
+std::string draw_progress_bar(double progress, int width = 20) {
+   // Ensure progress is between 0 and 100
+   progress = std::max(0.0, std::min(100.0, progress));
+   
+   // Calculate the number of filled positions
+   int filled = static_cast<int>(progress * width / 100.0);
+   
+   // Create the progress bar
+   std::string bar = "[";
+   for (int i = 0; i < width; ++i) {
+       if (i < filled) {
+           bar += "=";
+       } else if (i == filled) {
+           bar += ">";
+       } else {
+           bar += " ";
        }
-       
-       // Print output partition
-       std::cout << "  Output Partition:" << std::endl;
-       for (size_t i = 0; i < output_string_partition.size(); ++i) {
-           const auto& subset = output_string_partition[i];
-           double value = calculate_subset_value(tx_data, subset, SubsetType::OUTPUTS);
-           
-           std::cout << "    Group " << (i + 1) << ": { ";
-           for (size_t j = 0; j < subset.size(); ++j) {
-               std::cout << subset[j];
-               if (j < subset.size() - 1) {
-                   std::cout << ", ";
-               }
-           }
-           std::cout << " } = " << value << " BTC" << std::endl;
-       }
-       
-       // Print the mapping
-       std::cout << "  Mapping:" << std::endl;
-       for (size_t i = 0; i < input_string_partition.size(); ++i) {
-           double input_value = calculate_subset_value(tx_data, input_string_partition[i], SubsetType::INPUTS);
-           double output_value = calculate_subset_value(tx_data, output_string_partition[i], SubsetType::OUTPUTS);
-           double difference = input_value - output_value;
-           
-           std::cout << "    Input Group " << (i + 1) << " -> Output Group " << (i + 1) << std::endl;
-           std::cout << "      Input: { ";
-           for (size_t j = 0; j < input_string_partition[i].size(); ++j) {
-               std::cout << input_string_partition[i][j];
-               if (j < input_string_partition[i].size() - 1) {
-                   std::cout << ", ";
-               }
-           }
-           std::cout << " } = " << input_value << " BTC" << std::endl;
-           
-           std::cout << "      Output: { ";
-           for (size_t j = 0; j < output_string_partition[i].size(); ++j) {
-               std::cout << output_string_partition[i][j];
-               if (j < output_string_partition[i].size() - 1) {
-                   std::cout << ", ";
-               }
-           }
-           std::cout << " } = " << output_value << " BTC" << std::endl;
-           
-           std::cout << "      Difference: " << difference << " BTC" << std::endl;
-       }
-       
-       // Print the total difference
-       double total_input = 0.0;
-       double total_output = 0.0;
-       
-       for (size_t i = 0; i < input_string_partition.size(); ++i) {
-           total_input += calculate_subset_value(tx_data, input_string_partition[i], SubsetType::INPUTS);
-           total_output += calculate_subset_value(tx_data, output_string_partition[i], SubsetType::OUTPUTS);
-       }
-       
-       std::cout << "  Total Difference: " << (total_input - total_output) << " BTC" << std::endl;
    }
+   bar += "]";
+   
+   return bar;
 }
 
 /**
@@ -544,65 +572,34 @@ size_t stirling_second_kind(size_t n, size_t k) {
 }
 
 /**
-* Calculates the factorial of a number.
-* 
-* @param n The number
-* @return n!
-*/
-size_t factorial(size_t n) {
-    if (n <= 1) return 1;
-    size_t result = 1;
-    for (size_t i = 2; i <= n; ++i) {
-        result *= i;
-    }
-    return result;
-}
-
-/**
-* Draws a simple ASCII progress bar.
-* 
-* @param progress Percentage of progress (0-100)
-* @param width Width of the progress bar in characters
-* @return String containing the ASCII progress bar
-*/
-std::string draw_progress_bar(double progress, int width = 20) {
-    // Ensure progress is between 0 and 100
-    progress = std::max(0.0, std::min(100.0, progress));
-    
-    // Calculate the number of filled positions
-    int filled = static_cast<int>(progress * width / 100.0);
-    
-    // Create the progress bar
-    std::string bar = "[";
-    for (int i = 0; i < width; ++i) {
-        if (i < filled) {
-            bar += "=";
-        } else if (i == filled) {
-            bar += ">";
-        } else {
-            bar += " ";
-        }
-    }
-    bar += "]";
-    
-    return bar;
-}
-
-/**
 * Processes chunks of partitions to reduce memory usage.
+* Writes valid mappings directly to a CSV file.
 * 
 * @param tx_data The transaction data
 * @param input_mapper Mapper for input elements
 * @param output_mapper Mapper for output elements
 * @param chunk_size Size of partition chunks to process at once
+* @param output_filename Name of the output CSV file
 * @return Number of valid mappings found
 */
 size_t process_partition_chunks(
    const TransactionData& tx_data,
    const ElementMapper& input_mapper,
    const ElementMapper& output_mapper,
-   size_t chunk_size
+   size_t chunk_size,
+   const std::string& output_filename
 ) {
+   // Open output file
+   std::ofstream output_file(output_filename);
+   if (!output_file.is_open()) {
+       std::cerr << "Error: Could not open output file " << output_filename << std::endl;
+       return 0;
+   }
+   
+   // Write CSV header
+   output_file << "Mapping_ID,Group_Count,Total_Input_Value,Total_Output_Value,Total_Difference\n";
+   output_file << "Mapping_ID,Group_Number,Input_Group,Input_Value,Output_Group,Output_Value,Difference\n";
+   
    // Convert element IDs to indices
    std::vector<ElementIndex> input_indices(input_mapper.elements.size());
    std::vector<ElementIndex> output_indices(output_mapper.elements.size());
@@ -651,13 +648,13 @@ size_t process_partition_chunks(
    }
    
    std::cout << "Estimated compatible pairs to check: " << total_compatible_pairs << std::endl;
+   std::cout << "Writing results to: " << output_filename << std::endl;
    
-   // Storage for valid mappings and statistics
+   // Storage for statistics
    std::atomic<size_t> valid_count(0);
    std::atomic<size_t> pruned_count(0);
    std::atomic<size_t> checked_count(0);
-   std::mutex results_mutex;
-   std::vector<std::tuple<IndexPartition, IndexPartition, std::vector<size_t>>> valid_mappings;
+   std::mutex file_mutex;
    
    // Determine the number of threads to use
    unsigned int num_threads = std::thread::hardware_concurrency();
@@ -673,10 +670,6 @@ size_t process_partition_chunks(
    // For progress tracking
    auto start_time = std::chrono::high_resolution_clock::now();
    auto last_update_time = start_time;
-   
-   // Track partitions by group size for more accurate progress tracking
-   std::vector<size_t> input_partitions_processed(input_ids.size() + 1, 0);
-   std::vector<size_t> output_partitions_processed(output_ids.size() + 1, 0);
    
    // Main processing loop
    while (input_generator.has_more()) {
@@ -718,8 +711,8 @@ size_t process_partition_chunks(
                    input_mapper,
                    output_mapper,
                    valid_count,
-                   results_mutex,
-                   valid_mappings,
+                   file_mutex,
+                   output_file,
                    pruned_count,
                    checked_count
                );
@@ -749,8 +742,8 @@ size_t process_partition_chunks(
                        std::ref(input_mapper),
                        std::ref(output_mapper),
                        std::ref(valid_count), 
-                       std::ref(results_mutex), 
-                       std::ref(valid_mappings),
+                       std::ref(file_mutex), 
+                       std::ref(output_file),
                        std::ref(pruned_count),
                        std::ref(checked_count)
                    ));
@@ -814,35 +807,31 @@ size_t process_partition_chunks(
              << "Pruned " << pruned_count << " pairs. Found " 
              << valid_count << " valid mappings." << std::endl;
    
-   // Ask user if they want to see all valid mappings
-   if (!valid_mappings.empty()) {
-       char show_mappings;
-       std::cout << "\nDo you want to display all " << valid_mappings.size() 
-                 << " valid mappings? (y/n): ";
-       std::cin >> show_mappings;
-       
-       if (show_mappings == 'y' || show_mappings == 'Y') {
-           display_valid_mappings(tx_data, valid_mappings, input_mapper, output_mapper);
-       }
-   }
+   // Close the output file
+   output_file.close();
    
-   std::cout << "\nTotal valid partitions and mappings found: " << valid_count << std::endl;
+   std::cout << "\nResults have been written to: " << output_filename << std::endl;
+   std::cout << "Total valid partitions and mappings found: " << valid_count << std::endl;
+   
    return valid_count;
 }
 
 /**
 * Finds all valid partitions and mappings of inputs and outputs in a transaction.
 * Uses memory-efficient data structures and chunked processing.
+* Writes results directly to a CSV file.
 * 
 * @param tx_data The transaction data
+* @param output_filename Optional filename for the output CSV file
 * @return The number of valid partitions and mappings found
 */
-size_t find_valid_partitions(const TransactionData& tx_data) {
+size_t find_valid_partitions(const TransactionData& tx_data, const std::string& output_filename = "valid_mappings.csv") {
    // Get input and output IDs
    const auto& input_ids = tx_data.get_input_ids();
    const auto& output_ids = tx_data.get_output_ids();
    
    std::cout << "Finding valid partitions using memory-efficient chunked processing..." << std::endl;
+   std::cout << "Results will be written to: " << output_filename << std::endl;
    
    // Create element mappers
    ElementMapper input_mapper(input_ids);
@@ -851,8 +840,8 @@ size_t find_valid_partitions(const TransactionData& tx_data) {
    // Fixed chunk size of 500
    const size_t chunk_size = 500;
    
-   // Process partitions in chunks
-   return process_partition_chunks(tx_data, input_mapper, output_mapper, chunk_size);
+   // Process partitions in chunks and write to file
+   return process_partition_chunks(tx_data, input_mapper, output_mapper, chunk_size, output_filename);
 }
 
 #endif // PARTITION_ANALYZER_H

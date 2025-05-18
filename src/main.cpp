@@ -360,35 +360,35 @@ int main() {
        std::cout << "Number of possible input subsets: " << input_subsets.size() << std::endl;
        std::cout << "Number of possible output subsets: " << output_subsets.size() << std::endl;
        
-       // Ask if user wants to see all valid input-output combinations
-       char show_combinations;
-       std::cout << "\nDo you want to see all valid input-output combinations? (y/n): ";
-       std::cin >> show_combinations;
+       // Ask for output filename
+       std::string output_filename;
+       std::cout << "\nEnter output filename for valid combinations (default: valid_combinations.csv): ";
+       std::cin.ignore(); // Clear the input buffer
+       std::getline(std::cin, output_filename);
        
-       if (show_combinations == 'y' || show_combinations == 'Y') {
-           // Find and display all valid combinations
-           std::cout << "\n===== Valid Input-Output Combinations =====" << std::endl;
-           
-           // Calculate the maximum possible combinations
-           size_t max_combinations = input_subsets.size() * output_subsets.size();
-           std::cout << "Maximum possible combinations: " << max_combinations << std::endl;
-           
-           // Check if there are too many combinations
-           if (max_combinations > 1000) {
-               char confirm;
-               std::cout << "Warning: This will generate a large number of combinations." << std::endl;
-               std::cout << "Are you sure you want to continue? (y/n): ";
-               std::cin >> confirm;
-               
-               if (confirm != 'y' && confirm != 'Y') {
-                   std::cout << "Operation cancelled by user." << std::endl;
-                   return EXIT_SUCCESS;
-               }
-           }
-           
-           // Find and display valid combinations
-           size_t valid_count = find_valid_combinations(tx_data, input_subsets, output_subsets);
+       if (output_filename.empty()) {
+           output_filename = "valid_combinations.csv";
        }
+       
+       // Calculate the maximum possible combinations
+       size_t max_combinations = input_subsets.size() * output_subsets.size();
+       std::cout << "Maximum possible combinations: " << max_combinations << std::endl;
+       
+       // Check if there are too many combinations
+       if (max_combinations > 1000) {
+           char confirm;
+           std::cout << "Warning: This will generate a large number of combinations." << std::endl;
+           std::cout << "Are you sure you want to continue? (y/n): ";
+           std::cin >> confirm;
+           
+           if (confirm != 'y' && confirm != 'Y') {
+               std::cout << "Operation cancelled by user." << std::endl;
+               return EXIT_SUCCESS;
+           }
+       }
+       
+       // Find valid combinations and write to file
+       size_t valid_count = find_valid_combinations(tx_data, input_subsets, output_subsets, output_filename);
    } else if (analysis_choice == 2) {
        // Inform user about complexity
        size_t num_inputs = tx_data.get_input_ids().size();
@@ -409,9 +409,19 @@ int main() {
            }
        }
        
-       // Perform comprehensive partition analysis
+       // Ask for output filename
+       std::string output_filename;
+       std::cout << "\nEnter output filename for valid partitions (default: valid_mappings.csv): ";
+       std::cin.ignore(); // Clear the input buffer
+       std::getline(std::cin, output_filename);
+       
+       if (output_filename.empty()) {
+           output_filename = "valid_mappings.csv";
+       }
+       
+       // Perform comprehensive partition analysis and write to file
        std::cout << "\nPerforming comprehensive partition analysis..." << std::endl;
-       find_valid_partitions(tx_data);
+       find_valid_partitions(tx_data, output_filename);
    } else {
        std::cout << "Invalid choice. Exiting." << std::endl;
        return EXIT_FAILURE;
