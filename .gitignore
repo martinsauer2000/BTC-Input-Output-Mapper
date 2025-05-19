@@ -2,7 +2,3 @@
 
 # Ignore macOS files
 .DS_Store
-
-# Ignore binary builds for now
-bin/
-obj/

@@ -4,7 +4,7 @@ OS := $(shell uname)
 # Set the compiler and flags based on OS
 ifeq ($(OS), Linux)
     CC = g++
-    EXEC = ./bin/my_program_linux
+    EXEC = ./bin/BTC_Input_Output_Mapper_Linux
     CFLAGS = -Wall -g -c -I/usr/local/include
     LFLAGS = -lcurl
     # TODO: check includes for curl and nlohmann-json
@@ -13,7 +13,7 @@ endif
 ifeq ($(OS), Darwin)
     # brew install gcc
     CC = g++-14
-    EXEC = ./bin/my_program_mac
+    EXEC = ./bin/BTC_Input_Output_Mapper_macOS
     CFLAGS = -Wall -g -c -I/opt/homebrew/opt/nlohmann-json/include
     LFLAGS = -lcurl
 endif
